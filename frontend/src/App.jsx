@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  ArrowRight, Camera, Check, ChevronDown, ChevronLeft, Heart, Menu,
+  ArrowRight, Check, ChevronDown, ChevronLeft, Heart, LayoutDashboard, Menu,
   Minus, Plus, Search, ShoppingBag, Sparkles, Truck, User, X,
 } from 'lucide-react'
 import './App.css'
+import './Premium.css'
+import { calculateOrderTotal, DELIVERY_FEE, formatPrice } from './lib/currency'
+import { supabase } from './lib/supabase'
+import AdminDashboard from './AdminDashboard'
 
 const Motion = motion
 const products = [
@@ -20,14 +24,12 @@ const products = [
 
 const collections = [
   { name: 'For Women', kicker: 'The feminine edit', image: 'https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?auto=format&fit=crop&w=1200&q=85', copy: 'Quietly confident pieces for every chapter.' },
-  { name: 'For Men', kicker: 'The considered edit', image: 'https://images.unsplash.com/photo-1523779917675-b6ed3a42a561?auto=format&fit=crop&w=1200&q=85', copy: 'Modern essentials, made to be lived in.' },
+  { name: 'For Men', kicker: 'The considered edit', image: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=1200&q=85', copy: 'Modern essentials, made to be lived in.' },
   { name: 'Pack 3 en 1', kicker: 'The gifting edit', image: 'https://images.unsplash.com/photo-1547887538-e3a2f32cb1cc?auto=format&fit=crop&w=1200&q=85', copy: 'Three beautiful reasons to celebrate.' },
 ]
 
-const formatPrice = (price) => `${price.toFixed(2).replace('.', ',')} €`
-
 function App() {
-  const [activeView, setActiveView] = useState('home')
+  const [activeView, setActiveView] = useState(() => window.location.pathname === '/admin' ? 'admin' : 'home')
   const [activeCategory, setActiveCategory] = useState('All')
   const [cart, setCart] = useState(() => {
     try { return JSON.parse(localStorage.getItem('montana-cart') || '[]') } catch { return [] }
@@ -41,6 +43,11 @@ function App() {
   const [orderComplete, setOrderComplete] = useState(false)
   const [toast, setToast] = useState('')
   const [email, setEmail] = useState('')
+  const [scrolled, setScrolled] = useState(false)
+  const [authOpen, setAuthOpen] = useState(false)
+  const [contactOpen, setContactOpen] = useState(false)
+  const [session, setSession] = useState(null)
+  const [isAdmin, setIsAdmin] = useState(false)
 
   useEffect(() => localStorage.setItem('montana-cart', JSON.stringify(cart)), [cart])
   useEffect(() => {
@@ -48,6 +55,34 @@ function App() {
     const timer = setTimeout(() => setToast(''), 2600)
     return () => clearTimeout(timer)
   }, [toast])
+  useEffect(() => {
+    const updateHeader = () => setScrolled(window.scrollY > 24)
+    updateHeader()
+    window.addEventListener('scroll', updateHeader, { passive: true })
+    return () => window.removeEventListener('scroll', updateHeader)
+  }, [])
+  useEffect(() => {
+    let active = true
+    supabase.auth.getSession().then(({ data }) => {
+      if (active) setSession(data.session)
+    })
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession)
+      if (!nextSession) setIsAdmin(false)
+    })
+    return () => {
+      active = false
+      listener.subscription.unsubscribe()
+    }
+  }, [])
+  useEffect(() => {
+    let active = true
+    if (!session?.user?.id) return undefined
+    supabase.from('user_roles').select('role').eq('user_id', session.user.id).maybeSingle().then(({ data, error }) => {
+      if (active) setIsAdmin(!error && data?.role === 'admin')
+    })
+    return () => { active = false }
+  }, [session])
 
   const cartCount = cart.reduce((total, item) => total + item.quantity, 0)
   const cartTotal = cart.reduce((total, item) => total + item.price * item.quantity, 0)
@@ -57,6 +92,7 @@ function App() {
     setActiveCategory(category)
     setMobileMenu(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
+    window.history.pushState({}, '', view === 'admin' ? '/admin' : '/')
   }
 
   const addToCart = (product) => {
@@ -81,10 +117,60 @@ function App() {
     if (email) { setToast('Welcome to the Montana circle'); setEmail('') }
   }
 
+  const placeOrder = async (form) => {
+    const orderNumber = `MC-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
+    const subtotal = cartTotal
+    const total = calculateOrderTotal(subtotal)
+    const { data: order, error: orderError } = await supabase.from('orders').insert({
+      user_id: session?.user?.id || null,
+      order_number: orderNumber,
+      customer_name: form.name.trim(),
+      customer_email: session?.user?.email || null,
+      customer_phone: form.phone.trim(),
+      delivery_address: form.address.trim(),
+      city: form.city.trim(),
+      subtotal,
+      delivery_fee: DELIVERY_FEE,
+      discount_total: 0,
+      total,
+      payment_method: 'cod',
+      payment_status: 'pending',
+      order_status: 'pending',
+    }).select('id, email_notification_token').single()
+    if (orderError) {
+      setToast(`Order could not be saved: ${orderError.message}`)
+      return false
+    }
+    const { error: itemsError } = await supabase.from('order_items').insert(cart.map((item) => ({
+      order_id: order.id,
+      product_id: typeof item.id === 'string' ? item.id : null,
+      product_name: item.name,
+      product_image: item.image,
+      quantity: item.quantity,
+      unit_price: item.price,
+      subtotal: item.price * item.quantity,
+    })))
+    if (itemsError) {
+      setToast(`Order items could not be saved: ${itemsError.message}`)
+      return false
+    }
+    const { error: notificationError } = await supabase.functions.invoke('send-order-notification', {
+      body: { order_id: order.id, notification_token: order.email_notification_token },
+    })
+    if (notificationError) {
+      console.error('Order notification failed', notificationError)
+      setToast('Order saved. Email notification is pending provider setup.')
+    }
+    setCart([])
+    setCheckout(false)
+    setOrderComplete(true)
+    return true
+  }
+
   return (
     <div className="app-shell">
-      <div className="announcement"><Sparkles size={13} /> Complimentary delivery on orders over 150 € <span>—</span> Complimentary gift wrapping</div>
-      <header className="site-header">
+      <div className="announcement"><Sparkles size={13} /> Secure delivery: {formatPrice(DELIVERY_FEE)} per order <span>—</span> Complimentary gift wrapping</div>
+      <header className={`site-header ${scrolled ? 'is-scrolled' : ''}`}>
         <button className="mobile-toggle icon-button" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Toggle menu">{mobileMenu ? <X size={21} /> : <Menu size={21} />}</button>
         <button className="wordmark" onClick={() => navigate('home')}>MONTANA <span>CADEAUX</span></button>
         <nav className={`main-nav ${mobileMenu ? 'is-open' : ''}`}>
@@ -92,24 +178,25 @@ function App() {
           <button onClick={() => navigate('collection', 'For Men')}>FOR MEN <ChevronDown size={13} /></button>
           <button onClick={() => navigate('collection', 'Pack 3 en 1')}>PACK 3 EN 1</button>
           <button onClick={() => navigate('collection', 'All')}>NEW ARRIVALS</button>
+          {isAdmin && <button className="dashboard-nav-link" onClick={() => navigate('admin')} aria-label="Open admin dashboard"><LayoutDashboard size={14} /> DASHBOARD</button>}
         </nav>
         <div className="header-actions">
           <button className="icon-button" onClick={() => setSearchOpen(!searchOpen)} aria-label="Search"><Search size={19} /></button>
-          <button className="icon-button account-button" onClick={() => setToast('Account access is coming soon')} aria-label="Account"><User size={19} /></button>
+          <button className="icon-button account-button" onClick={() => session ? supabase.auth.signOut() : setAuthOpen(true)} aria-label={session ? 'Sign out' : 'Account'}><User size={19} /></button>
           <button className="bag-button icon-button" onClick={() => setCartOpen(true)} aria-label="Shopping bag"><ShoppingBag size={19} />{cartCount > 0 && <span>{cartCount}</span>}</button>
         </div>
       </header>
       <AnimatePresence>{searchOpen && <Motion.div className="search-bar" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}><Search size={18} /><input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search pieces, collections..." /><button onClick={() => { setSearch(''); setSearchOpen(false) }}><X size={18} /></button></Motion.div>}</AnimatePresence>
 
-      <main>
+      {activeView === 'admin' ? <AdminDashboard session={session} onSignIn={() => setAuthOpen(true)} onBack={() => navigate('home')} onSignOut={() => supabase.auth.signOut()} /> : <><main>
         {activeView === 'home' ? <Home navigate={navigate} addToCart={addToCart} setSelectedProduct={setSelectedProduct} setActiveCategory={setActiveCategory} submitNewsletter={submitNewsletter} email={email} setEmail={setEmail} /> : <CollectionView category={activeCategory} products={filteredProducts} navigate={navigate} addToCart={addToCart} setSelectedProduct={setSelectedProduct} />}
-      </main>
-
-      <Footer navigate={navigate} />
+      </main><Footer navigate={navigate} openContact={() => setContactOpen(true)} /></>}
       <AnimatePresence>{selectedProduct && <ProductModal product={selectedProduct} close={() => setSelectedProduct(null)} addToCart={addToCart} />}</AnimatePresence>
       <AnimatePresence>{cartOpen && <CartDrawer cart={cart} total={cartTotal} close={() => setCartOpen(false)} updateQuantity={updateQuantity} remove={(id) => setCart((current) => current.filter((item) => item.id !== id))} checkout={() => { setCartOpen(false); setCheckout(true); window.scrollTo({ top: 0 }) }} />}</AnimatePresence>
-      <AnimatePresence>{checkout && <Checkout cart={cart} total={cartTotal} close={() => setCheckout(false)} complete={() => { setCart([]); setCheckout(false); setOrderComplete(true) }} />}</AnimatePresence>
+      <AnimatePresence>{checkout && <Checkout cart={cart} total={cartTotal} close={() => setCheckout(false)} complete={placeOrder} />}</AnimatePresence>
       <AnimatePresence>{orderComplete && <OrderConfirmation close={() => setOrderComplete(false)} navigate={navigate} />}</AnimatePresence>
+      <AnimatePresence>{authOpen && <AuthModal close={() => setAuthOpen(false)} mode="login" onSuccess={() => setAuthOpen(false)} />}</AnimatePresence>
+      <AnimatePresence>{contactOpen && <ContactModal close={() => setContactOpen(false)} />}</AnimatePresence>
       <AnimatePresence>{toast && <Motion.div className="toast" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }}><Check size={16} />{toast}</Motion.div>}</AnimatePresence>
     </div>
   )
@@ -121,7 +208,7 @@ function Home({ navigate, addToCart, setSelectedProduct, submitNewsletter, email
       <div className="hero-content">
         <p className="eyebrow light">MONTANA CADEAUX · EST. 2024</p>
         <h1>The Art of<br /><em>Giving</em> Elegance.</h1>
-        <p className="hero-subtitle">Discover timeless accessories and unforgettable gifts, thoughtfully chosen for every meaningful moment.</p>
+        <p className="hero-subtitle">Discover exclusive accessories and perfect gifts, thoughtfully chosen for every meaningful moment.</p>
         <div className="hero-actions"><button className="button button-gold" onClick={() => navigate('collection', 'All')}>SHOP NOW <ArrowRight size={16} /></button><button className="text-button light-text" onClick={() => document.getElementById('collections').scrollIntoView({ behavior: 'smooth' })}>EXPLORE COLLECTIONS <ArrowRight size={15} /></button></div>
       </div>
       <div className="hero-side-note">A little luxury,<br />beautifully given.</div>
@@ -130,6 +217,11 @@ function Home({ navigate, addToCart, setSelectedProduct, submitNewsletter, email
     <section className="section collections-section" id="collections">
       <SectionHeading eyebrow="Curated for you" title="Find your signature" copy="Three distinct worlds. One unmistakable point of view." />
       <div className="collection-grid">{collections.map((collection) => <button className="collection-card" key={collection.name} onClick={() => navigate('collection', collection.name)}><img src={collection.image} alt="" /><span className="collection-overlay" /><div className="collection-card-content"><p>{collection.kicker}</p><h3>{collection.name}</h3><span>{collection.copy}</span><strong>DISCOVER <ArrowRight size={15} /></strong></div></button>)}</div>
+    </section>
+    <section className="service-strip" aria-label="Montana service promises">
+      <div><Sparkles size={18} /><strong>Thoughtfully selected</strong><span>Accessories chosen for meaningful occasions.</span></div>
+      <div><ShoppingBag size={18} /><strong>Gift-ready presentation</strong><span>Every order is prepared with exceptional care.</span></div>
+      <div><Truck size={18} /><strong>Delivery across Tunisia</strong><span>Clear checkout details before you place an order.</span></div>
     </section>
     <section className="section product-section">
       <div className="section-heading row-heading"><SectionHeading eyebrow="The edit" title="Bestsellers" copy="The pieces our community keeps coming back to." /><button className="text-button" onClick={() => navigate('collection', 'All')}>VIEW ALL <ArrowRight size={15} /></button></div>
@@ -153,15 +245,91 @@ function ProductCard({ product, addToCart, setSelectedProduct }) { return <artic
 
 function CollectionView({ category, products: items, navigate, addToCart, setSelectedProduct }) { const title = category === 'All' ? 'All pieces' : category; const intro = category === 'Pack 3 en 1' ? 'Three considered pieces, presented as one unforgettable gesture.' : category === 'For Women' ? 'Jewellery and accessories with a quietly feminine point of view.' : category === 'For Men' ? 'Modern essentials for a life well lived.' : 'The complete Montana edit, curated for every occasion.'; return <><section className="collection-hero"><p className="eyebrow">Montana collection</p><h1>{title}</h1><p>{intro}</p></section><section className="section collection-results"><div className="filter-bar"><span>{items.length} pieces</span><div><button className={category === 'All' ? 'active' : ''} onClick={() => navigate('collection', 'All')}>ALL</button><button className={category === 'For Women' ? 'active' : ''} onClick={() => navigate('collection', 'For Women')}>WOMEN</button><button className={category === 'For Men' ? 'active' : ''} onClick={() => navigate('collection', 'For Men')}>MEN</button><button className={category === 'Pack 3 en 1' ? 'active' : ''} onClick={() => navigate('collection', 'Pack 3 en 1')}>PACK 3 EN 1</button></div><button className="filter-sort">SORT BY <ChevronDown size={14} /></button></div>{items.length ? <ProductGrid products={items} addToCart={addToCart} setSelectedProduct={setSelectedProduct} /> : <div className="empty-state"><p>No pieces found.</p><button className="button button-dark" onClick={() => navigate('collection', 'All')}>VIEW ALL PIECES</button></div>}</section></> }
 
-function ProductModal({ product, close, addToCart }) { return <Motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}><Motion.div className="product-modal" initial={{ opacity: 0, y: 25 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 25 }} onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={20} /></button><div className="modal-image"><img src={product.image} alt={product.name} /></div><div className="modal-details"><p className="eyebrow">{product.category} · {product.type}</p><h2>{product.name}</h2><p className="modal-price">{formatPrice(product.price)}</p><p className="modal-description">{product.description}</p><div className="variation"><span>COLOUR</span><div>{product.colors.map((color) => <button key={color}>{color}</button>)}</div></div><p className="stock"><span /> In stock — ready to ship</p><button className="button button-dark full-button" onClick={() => { addToCart(product); close() }}>ADD TO BAG <ShoppingBag size={16} /></button><p className="shipping-note"><Truck size={15} /> Free delivery over 150 € · Gift wrapping available</p></div></Motion.div></Motion.div> }
+function ProductModal({ product, close, addToCart }) { return <Motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}><Motion.div className="product-modal" initial={{ opacity: 0, y: 25 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 25 }} onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={20} /></button><div className="modal-image"><img src={product.image} alt={product.name} /></div><div className="modal-details"><p className="eyebrow">{product.category} · {product.type}</p><h2>{product.name}</h2><p className="modal-price">{formatPrice(product.price)}</p><p className="modal-description">{product.description}</p><div className="variation"><span>COLOUR</span><div>{product.colors.map((color) => <button key={color}>{color}</button>)}</div></div><p className="stock"><span /> In stock — ready to ship</p><button className="button button-dark full-button" onClick={() => { addToCart(product); close() }}>ADD TO BAG <ShoppingBag size={16} /></button><p className="shipping-note"><Truck size={15} /> Delivery fee: {formatPrice(DELIVERY_FEE)} per order · Gift wrapping available</p></div></Motion.div></Motion.div> }
 
-function CartDrawer({ cart, total, close, updateQuantity, remove, checkout }) { return <Motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}><Motion.aside className="cart-drawer" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 28 }} onClick={(event) => event.stopPropagation()}><div className="drawer-header"><div><p className="eyebrow">Your selection</p><h2>Your bag <span>({cart.reduce((sum, item) => sum + item.quantity, 0)})</span></h2></div><button className="icon-button" onClick={close}><X size={20} /></button></div>{cart.length ? <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={item.id}><img src={item.image} alt="" /><div className="cart-item-info"><h3>{item.name}</h3><p>{formatPrice(item.price)}</p><div className="quantity"><button onClick={() => updateQuantity(item.id, -1)}><Minus size={13} /></button><span>{item.quantity}</span><button onClick={() => updateQuantity(item.id, 1)}><Plus size={13} /></button></div></div><button className="remove-item" onClick={() => remove(item.id)}>Remove</button></div>)}</div><div className="drawer-bottom"><div className="subtotal"><span>SUBTOTAL</span><strong>{formatPrice(total)}</strong></div><p className="delivery-copy">Taxes calculated at checkout. Complimentary delivery over 150 €.</p><button className="button button-dark full-button" onClick={checkout}>PROCEED TO CHECKOUT <ArrowRight size={15} /></button></div></> : <div className="empty-cart"><ShoppingBag size={30} /><p>Your bag is waiting to be filled.</p><button className="button button-outline-dark" onClick={close}>CONTINUE SHOPPING</button></div>}</Motion.aside></Motion.div> }
+function CartDrawer({ cart, total, close, updateQuantity, remove, checkout }) { const finalTotal = calculateOrderTotal(total); return <Motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}><Motion.aside className="cart-drawer" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 28 }} onClick={(event) => event.stopPropagation()}><div className="drawer-header"><div><p className="eyebrow">Your selection</p><h2>Your bag <span>({cart.reduce((sum, item) => sum + item.quantity, 0)})</span></h2></div><button className="icon-button" onClick={close}><X size={20} /></button></div>{cart.length ? <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={item.id}><img src={item.image} alt="" /><div className="cart-item-info"><h3>{item.name}</h3><p>{formatPrice(item.price)}</p><div className="quantity"><button onClick={() => updateQuantity(item.id, -1)}><Minus size={13} /></button><span>{item.quantity}</span><button onClick={() => updateQuantity(item.id, 1)}><Plus size={13} /></button></div></div><button className="remove-item" onClick={() => remove(item.id)}>Remove</button></div>)}</div><div className="drawer-bottom"><div className="subtotal"><span>SUBTOTAL</span><strong>{formatPrice(total)}</strong></div><div className="summary-line cart-delivery"><span>DELIVERY FEE</span><strong>{formatPrice(DELIVERY_FEE)}</strong></div><div className="summary-total cart-total"><span>TOTAL</span><strong>{formatPrice(finalTotal)}</strong></div><p className="delivery-copy">One fixed delivery fee is applied once per order.</p><button className="button button-dark full-button" onClick={checkout}>PROCEED TO CHECKOUT <ArrowRight size={15} /></button></div></> : <div className="empty-cart"><ShoppingBag size={30} /><p>Your bag is waiting to be filled.</p><button className="button button-outline-dark" onClick={close}>CONTINUE SHOPPING</button></div>}</Motion.aside></Motion.div> }
 
-function Checkout({ cart, total, close, complete }) { const [form, setForm] = useState({ name: '', phone: '', city: '', address: '' }); const valid = Object.values(form).every(Boolean); return <Motion.div className="checkout-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><div className="checkout-page"><button className="checkout-back" onClick={close}><ChevronLeft size={17} /> Back to bag</button><div className="checkout-grid"><div><p className="eyebrow">Montana Cadeaux</p><h1>Complete your order.</h1><p className="checkout-intro">Your pieces will be carefully wrapped and delivered to your door.</p><form className="checkout-form" onSubmit={(event) => { event.preventDefault(); if (valid) complete() }}><label>FULL NAME<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Your full name" /></label><label>PHONE NUMBER<input required type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+33 6 00 00 00 00" /></label><label>CITY<input required value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Paris" /></label><label>COMPLETE DELIVERY ADDRESS<textarea required value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Street, building, apartment..." /></label><div className="payment-choice"><span>PAYMENT</span><div><Check size={15} /> Cash on delivery</div></div><button className="button button-dark full-button" disabled={!valid}>PLACE ORDER <ArrowRight size={15} /></button></form></div><div className="checkout-summary"><p className="eyebrow">Order summary</p>{cart.map((item) => <div className="summary-item" key={item.id}><img src={item.image} alt="" /><div><p>{item.name}</p><span>Qty {item.quantity}</span></div><strong>{formatPrice(item.price * item.quantity)}</strong></div>)}<div className="summary-line"><span>Delivery</span><span>{total >= 150 ? 'Complimentary' : '5,00 €'}</span></div><div className="summary-total"><span>Total</span><strong>{formatPrice(total + (total >= 150 ? 0 : 5))}</strong></div></div></div></div></Motion.div> }
+function Checkout({ cart, total, close, complete }) { const [form, setForm] = useState({ name: '', phone: '', city: '', address: '' }); const [busy, setBusy] = useState(false); const valid = Object.values(form).every(Boolean); const finalTotal = calculateOrderTotal(total); const submit = async (event) => { event.preventDefault(); if (!valid || busy) return; setBusy(true); await complete(form); setBusy(false) }; return <Motion.div className="checkout-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><div className="checkout-page"><button className="checkout-back" onClick={close}><ChevronLeft size={17} /> Back to bag</button><div className="checkout-grid"><div><p className="eyebrow">Montana Cadeaux</p><h1>Complete your order.</h1><p className="checkout-intro">Your pieces will be carefully wrapped and delivered to your door.</p><form className="checkout-form" onSubmit={submit}><label>FULL NAME<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Your full name" /></label><label>PHONE NUMBER<input required type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+216 00 000 000" /></label><label>CITY<input required value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Tunis" /></label><label>COMPLETE DELIVERY ADDRESS<textarea required value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Street, building, apartment..." /></label><div className="payment-choice"><span>PAYMENT</span><div><Check size={15} /> Cash on delivery</div></div><button className="button button-dark full-button" disabled={!valid || busy}>{busy ? 'SAVING ORDER...' : 'PLACE ORDER'} <ArrowRight size={15} /></button></form></div><div className="checkout-summary"><p className="eyebrow">Order summary</p>{cart.map((item) => <div className="summary-item" key={item.id}><img src={item.image} alt="" /><div><p>{item.name}</p><span>Qty {item.quantity}</span></div><strong>{formatPrice(item.price * item.quantity)}</strong></div>)}<div className="summary-line"><span>Delivery Fee</span><strong>{formatPrice(DELIVERY_FEE)}</strong></div><div className="summary-total"><span>Total</span><strong>{formatPrice(finalTotal)}</strong></div></div></div></div></Motion.div> }
 
 function OrderConfirmation({ close, navigate }) { return <Motion.div className="modal-backdrop confirmation-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><div className="confirmation"><div className="confirmation-mark"><Check size={24} /></div><p className="eyebrow">Thank you</p><h2>Your order is on its way.</h2><p>We’ve received your order and will be in touch shortly to confirm delivery. Your gift is already being prepared with care.</p><p className="order-number">ORDER NO. MC-2024-0819</p><button className="button button-dark" onClick={() => { close(); navigate('home') }}>CONTINUE EXPLORING <ArrowRight size={15} /></button></div></Motion.div> }
 
-function Footer({ navigate }) { return <footer><div className="footer-top"><div className="footer-brand"><button className="wordmark" onClick={() => navigate('home')}>MONTANA <span>CADEAUX</span></button><p>The art of giving elegance.</p><div className="socials"><a href="https://instagram.com" aria-label="Instagram"><Camera size={17} /></a><a href="https://facebook.com" aria-label="Facebook">f</a></div></div><div className="footer-links"><div><h4>Explore</h4><button onClick={() => navigate('collection', 'For Women')}>For Women</button><button onClick={() => navigate('collection', 'For Men')}>For Men</button><button onClick={() => navigate('collection', 'Pack 3 en 1')}>Pack 3 en 1</button><button onClick={() => navigate('collection', 'All')}>New Arrivals</button></div><div><h4>Information</h4><button onClick={() => setTimeout(() => window.scrollTo({ top: 0 }), 0)}>Delivery & Returns</button><button onClick={() => setTimeout(() => window.scrollTo({ top: 0 }), 0)}>Our Story</button><button onClick={() => setTimeout(() => window.scrollTo({ top: 0 }), 0)}>Contact</button></div></div></div><div className="footer-bottom"><span>© 2024 Montana Cadeaux</span><span>Designed with intention in Paris</span><span>Privacy · Terms</span></div></footer> }
+function AuthModal({ close, mode: initialMode, onSuccess }) {
+  const [mode, setMode] = useState(initialMode)
+  const [form, setForm] = useState({ name: '', phone: '', address: '', city: '', email: '', password: '' })
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (event) => {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('')
+    const email = form.email.trim().toLowerCase()
+    const password = form.password
+    const result = mode === 'login'
+      ? await supabase.auth.signInWithPassword({ email, password })
+      : await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { full_name: form.name, phone: form.phone, address: form.address, city: form.city } },
+      })
+    setBusy(false)
+    if (result.error) {
+      setMessage(mode === 'login' && result.error.message === 'Invalid login credentials'
+        ? 'The email or password is incorrect. Check the Supabase user account or reset its password.'
+        : result.error.message)
+      return
+    }
+    if (mode === 'signup' && !result.data.session) {
+      localStorage.setItem('montana-pending-profile', JSON.stringify({ ...form, userId: result.data.user?.id }))
+      setMessage('Check your email to confirm your account.')
+      return
+    }
+    if (mode === 'signup') {
+      const { error: profileError } = await supabase.from('profiles').upsert({ id: result.data.user.id, full_name: form.name, email: form.email, phone: form.phone })
+      const { error: addressError } = await supabase.from('addresses').insert({ user_id: result.data.user.id, full_address: form.address, city: form.city, phone: form.phone, is_default: true })
+      if (profileError || addressError) {
+        setMessage(profileError?.message || addressError?.message || 'We could not save your profile details.')
+        setBusy(false)
+        return
+      }
+    }
+    if (mode === 'login') {
+      const pending = JSON.parse(localStorage.getItem('montana-pending-profile') || 'null')
+      if (pending && pending.email === email) {
+        const { error: profileError } = await supabase.from('profiles').upsert({ id: result.data.user.id, full_name: pending.name, email: pending.email, phone: pending.phone })
+        const { error: addressError } = await supabase.from('addresses').insert({ user_id: result.data.user.id, full_address: pending.address, city: pending.city, phone: pending.phone, is_default: true })
+        if (profileError || addressError) {
+          setMessage(profileError?.message || addressError?.message || 'We could not save your profile details.')
+          setBusy(false)
+          return
+        }
+        localStorage.removeItem('montana-pending-profile')
+      }
+    }
+    localStorage.removeItem('montana-pending-profile')
+    onSuccess()
+  }
+
+  return <Motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}>
+    <Motion.div className="auth-modal" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} onClick={(event) => event.stopPropagation()}>
+      <button className="modal-close" onClick={close}><X size={20} /></button>
+      <p className="eyebrow">Montana Cadeaux account</p>
+      <h2>{mode === 'login' ? 'Welcome back.' : 'Join the circle.'}</h2>
+      <p className="auth-copy">{mode === 'login' ? 'Sign in securely to access your account, orders and saved details.' : 'Create your account to save your details and follow every order.'}</p>
+      <form className={`auth-form ${mode === 'signup' ? 'signup-form' : ''}`} onSubmit={submit}>
+        {mode === 'signup' && <><label>FULL NAME<input required autoComplete="name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Your full name" /></label><label>PHONE NUMBER<input required type="tel" autoComplete="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="+216 00 000 000" /></label><label>CITY<input required autoComplete="address-level2" value={form.city} onChange={(event) => setForm({ ...form, city: event.target.value })} placeholder="Tunis" /></label><label>DELIVERY ADDRESS<textarea required autoComplete="street-address" value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder="Street, building, apartment..." /></label></>}
+        <label>EMAIL ADDRESS<input type="email" required autoComplete="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="you@example.com" /></label>
+        <label>PASSWORD<input type="password" required minLength={6} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="Enter your password" /></label>
+        {message && <p className="auth-message" role="alert">{message}</p>}
+        <button className="button button-dark full-button" disabled={busy}>{busy ? 'SIGNING YOU IN...' : mode === 'login' ? 'SIGN IN TO YOUR ACCOUNT' : 'CREATE MY ACCOUNT'} <ArrowRight size={15} /></button>
+      </form>
+      <button className="auth-switch" onClick={() => { setMessage(''); setMode(mode === 'login' ? 'signup' : 'login') }}>{mode === 'login' ? 'New to Montana? Create an account' : 'Already have an account? Sign in'}</button>
+    </Motion.div>
+  </Motion.div>
+}
+
+function ContactModal({ close }) { return <Motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}><Motion.div className="contact-modal" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={20} /></button><p className="eyebrow">Montana Cadeaux</p><h2>Let’s stay connected.</h2><p className="contact-intro">Follow our latest pieces or speak with us directly about your order.</p><div className="contact-options"><a className="contact-option contact-instagram" href="https://www.instagram.com/montana_cadeaux?exln=MTJqcTh5OGR6Y2czaA==" target="_blank" rel="noreferrer"><span className="contact-icon"><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="4" /><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none" /></svg></span><span><strong>Instagram</strong><small>@montana_cadeaux</small></span><ArrowRight size={16} /></a><a className="contact-option contact-whatsapp" href="https://wa.me/21622011095" target="_blank" rel="noreferrer"><span className="contact-icon contact-whatsapp-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4A8 8 0 1 1 20 11.5Z" /><path d="M8.8 8.6c.4-.4.8-.2 1 .2l.6 1.2c.2.3.1.6-.1.8l-.5.4c.5 1 1.2 1.7 2.2 2.2l.4-.5c.2-.2.5-.3.8-.1l1.2.6c.4.2.5.6.2 1-.4.6-.9.9-1.6.8-2.7-.5-5-2.8-5.5-5.5-.1-.7.2-1.2.8-1.6Z" /></svg></span><span><strong>WhatsApp</strong><small>+216 22 011 095</small></span><ArrowRight size={16} /></a></div></Motion.div></Motion.div> }
+
+function Footer({ navigate, openContact }) { return <footer><div className="footer-top"><div className="footer-brand"><button className="wordmark" onClick={() => navigate('home')}>MONTANA <span>CADEAUX</span></button><p>The art of giving elegance.</p><div className="socials"><a href="https://www.instagram.com/montana_cadeaux?exln=MTJqcTh5OGR6Y2czaA==" target="_blank" rel="noreferrer" aria-label="Montana Cadeaux on Instagram"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="4" /><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none" /></svg></a><a href="https://facebook.com" target="_blank" rel="noreferrer" aria-label="Montana Cadeaux on Facebook">f</a></div></div><div className="footer-links"><div><h4>Explore</h4><button onClick={() => navigate('collection', 'For Women')}>For Women</button><button onClick={() => navigate('collection', 'For Men')}>For Men</button><button onClick={() => navigate('collection', 'Pack 3 en 1')}>Pack 3 en 1</button><button onClick={() => navigate('collection', 'All')}>New Arrivals</button></div><div><h4>Information</h4><button onClick={() => setTimeout(() => window.scrollTo({ top: 0 }), 0)}>Delivery & Returns</button><button onClick={() => setTimeout(() => window.scrollTo({ top: 0 }), 0)}>Our Story</button><button onClick={openContact}>Contact</button></div></div></div><div className="footer-bottom"><span>© 2024 Montana Cadeaux</span><span>Designed with intention in Paris</span><span>Privacy · Terms</span></div></footer> }
 
 export default App
-
