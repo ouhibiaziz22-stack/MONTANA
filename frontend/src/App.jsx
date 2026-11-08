@@ -48,6 +48,7 @@ function App() {
   const [contactOpen, setContactOpen] = useState(false)
   const [session, setSession] = useState(null)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [profileName, setProfileName] = useState('')
 
   useEffect(() => localStorage.setItem('montana-cart', JSON.stringify(cart)), [cart])
   useEffect(() => {
@@ -78,14 +79,21 @@ function App() {
   useEffect(() => {
     let active = true
     if (!session?.user?.id) return undefined
-    supabase.from('user_roles').select('role').eq('user_id', session.user.id).maybeSingle().then(({ data, error }) => {
-      if (active) setIsAdmin(!error && data?.role === 'admin')
+    Promise.all([
+      supabase.from('user_roles').select('role').eq('user_id', session.user.id).maybeSingle(),
+      supabase.from('profiles').select('full_name').eq('id', session.user.id).maybeSingle(),
+    ]).then(([roleResult, profileResult]) => {
+      if (!active) return
+      setIsAdmin(!roleResult.error && roleResult.data?.role === 'admin')
+      setProfileName(profileResult.data?.full_name || session.user.user_metadata?.full_name || '')
     })
     return () => { active = false }
   }, [session])
 
   const cartCount = cart.reduce((total, item) => total + item.quantity, 0)
   const cartTotal = cart.reduce((total, item) => total + item.price * item.quantity, 0)
+  const accountName = profileName || session?.user?.user_metadata?.full_name || session?.user?.email?.split('@')[0] || ''
+  const accountInitials = accountName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'MC'
 
   const navigate = (view, category = 'All') => {
     setActiveView(view)
@@ -182,7 +190,7 @@ function App() {
         </nav>
         <div className="header-actions">
           <button className="icon-button" onClick={() => setSearchOpen(!searchOpen)} aria-label="Search"><Search size={19} /></button>
-          <button className="icon-button account-button" onClick={() => session ? supabase.auth.signOut() : setAuthOpen(true)} aria-label={session ? 'Sign out' : 'Account'}><User size={19} /></button>
+          <button className={`icon-button account-button ${session ? 'is-authenticated' : ''}`} onClick={() => session ? supabase.auth.signOut() : setAuthOpen(true)} aria-label={session ? `Sign out ${accountName}` : 'Open account'} title={session ? `Signed in as ${accountName}. Click to sign out.` : 'Sign in'}>{session ? <span className="account-initials">{accountInitials}</span> : <User size={19} />}</button>
           <button className="bag-button icon-button" onClick={() => setCartOpen(true)} aria-label="Shopping bag"><ShoppingBag size={19} />{cartCount > 0 && <span>{cartCount}</span>}</button>
         </div>
       </header>
@@ -313,9 +321,10 @@ function AuthModal({ close, mode: initialMode, onSuccess }) {
   return <Motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}>
     <Motion.div className="auth-modal" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} onClick={(event) => event.stopPropagation()}>
       <button className="modal-close" onClick={close}><X size={20} /></button>
-      <p className="eyebrow">Montana Cadeaux account</p>
+      <div className="auth-brand-panel"><div className="auth-monogram">MC</div><p className="eyebrow light">MONTANA CADEAUX</p><p className="auth-brand-line">The art of<br /><em>giving elegance.</em></p><span className="auth-brand-rule" /></div>
+      <div className="auth-form-panel"><p className="eyebrow">Your private account</p>
       <h2>{mode === 'login' ? 'Welcome back.' : 'Join the circle.'}</h2>
-      <p className="auth-copy">{mode === 'login' ? 'Sign in securely to access your account, orders and saved details.' : 'Create your account to save your details and follow every order.'}</p>
+      <p className="auth-copy">{mode === 'login' ? 'Sign in to continue to your saved details, orders and curated selections.' : 'Create your account to save your details and follow every order.'}</p>
       <form className={`auth-form ${mode === 'signup' ? 'signup-form' : ''}`} onSubmit={submit}>
         {mode === 'signup' && <><label>FULL NAME<input required autoComplete="name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Your full name" /></label><label>PHONE NUMBER<input required type="tel" autoComplete="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="+216 00 000 000" /></label><label>CITY<input required autoComplete="address-level2" value={form.city} onChange={(event) => setForm({ ...form, city: event.target.value })} placeholder="Tunis" /></label><label>DELIVERY ADDRESS<textarea required autoComplete="street-address" value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder="Street, building, apartment..." /></label></>}
         <label>EMAIL ADDRESS<input type="email" required autoComplete="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="you@example.com" /></label>
@@ -323,7 +332,7 @@ function AuthModal({ close, mode: initialMode, onSuccess }) {
         {message && <p className="auth-message" role="alert">{message}</p>}
         <button className="button button-dark full-button" disabled={busy}>{busy ? 'SIGNING YOU IN...' : mode === 'login' ? 'SIGN IN TO YOUR ACCOUNT' : 'CREATE MY ACCOUNT'} <ArrowRight size={15} /></button>
       </form>
-      <button className="auth-switch" onClick={() => { setMessage(''); setMode(mode === 'login' ? 'signup' : 'login') }}>{mode === 'login' ? 'New to Montana? Create an account' : 'Already have an account? Sign in'}</button>
+      <button className="auth-switch" onClick={() => { setMessage(''); setMode(mode === 'login' ? 'signup' : 'login') }}>{mode === 'login' ? 'New to Montana? Create an account' : 'Already have an account? Sign in'}</button></div>
     </Motion.div>
   </Motion.div>
 }
