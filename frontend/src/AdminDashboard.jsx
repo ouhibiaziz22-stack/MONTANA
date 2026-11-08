@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, CheckCircle2, Clock3, DollarSign, Edit3, Package, Plus, RefreshCw, Save, ShieldAlert, Trash2, TrendingUp } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Clock3, DollarSign, Edit3, ImagePlus, Package, Plus, RefreshCw, Save, ShieldAlert, Trash2, TrendingUp, X } from 'lucide-react'
 import { supabase } from './lib/supabase'
 import { formatPrice } from './lib/currency'
 import { defaultProducts } from './lib/catalog'
@@ -10,6 +10,7 @@ const emptyProduct = {
   description: '', regular_price: '', discount_price: '', stock_quantity: 0,
   is_featured: false, is_best_seller: false, is_new_arrival: true, is_active: true,
 }
+const emptyColor = { name: '', hex_code: '#C6A15B', stock_quantity: 0 }
 const statuses = [
   { value: 'pending', label: 'En attente' },
   { value: 'confirmed', label: 'Confirmée' },
@@ -33,6 +34,9 @@ export default function AdminDashboard({ session, onSignIn, onBack, onSignOut })
   const [setupRequired, setSetupRequired] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [selectedOrderItems, setSelectedOrderItems] = useState([])
+  const [imageFile, setImageFile] = useState(null)
+  const [imagePreview, setImagePreview] = useState('')
+  const [colors, setColors] = useState([])
 
   const verifyAdmin = useCallback(async () => {
     if (!session?.user?.id) { setAuthorized(false); return false }
@@ -115,12 +119,30 @@ export default function AdminDashboard({ session, onSignIn, onBack, onSignOut })
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadData() }, [loadData])
 
-  const resetForm = () => { setForm(emptyProduct); setEditingId(null) }
-  const editProduct = (product) => {
+  const resetForm = () => { setForm(emptyProduct); setEditingId(null); setImageFile(null); setImagePreview(''); setColors([]) }
+  const editProduct = async (product) => {
     setEditingId(product.id)
     setForm({ ...emptyProduct, ...product, category_id: product.category_id || '', discount_price: product.discount_price ?? '' })
+    setImageFile(null)
+    const [{ data: image }, { data: productColors }] = await Promise.all([
+      supabase.from('product_images').select('image_url').eq('product_id', product.id).order('display_order').limit(1).maybeSingle(),
+      supabase.from('product_colors').select('id, name, hex_code, stock_quantity').eq('product_id', product.id).order('created_at'),
+    ])
+    setImagePreview(image?.image_url || '')
+    setColors((productColors || []).map(({ id, name, hex_code, stock_quantity }) => ({ id, name, hex_code, stock_quantity })))
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+  const handleImageChange = (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) { setMessage('Please choose an image file.'); return }
+    if (file.size > 5 * 1024 * 1024) { setMessage('Images must be smaller than 5 MB.'); return }
+    setImageFile(file)
+    setImagePreview(URL.createObjectURL(file))
+  }
+  const addColor = () => setColors((current) => [...current, { ...emptyColor }])
+  const updateColor = (index, key, value) => setColors((current) => current.map((color, colorIndex) => colorIndex === index ? { ...color, [key]: value } : color))
+  const removeColor = (index) => setColors((current) => current.filter((_, colorIndex) => colorIndex !== index))
   const saveProduct = async (event) => {
     event.preventDefault()
     setBusy(true); setMessage('')
@@ -134,9 +156,30 @@ export default function AdminDashboard({ session, onSignIn, onBack, onSignOut })
     }
     const result = editingId
       ? await supabase.from('products').update(payload).eq('id', editingId)
-      : await supabase.from('products').insert(payload)
+      : await supabase.from('products').insert(payload).select('id').single()
     if (result.error) setMessage(result.error.message)
-    else { setMessage(editingId ? 'Product updated.' : 'Product created.'); resetForm(); await loadData() }
+    else {
+      const productId = editingId || result.data?.[0]?.id
+      if (!productId) { setMessage('Product saved, but its ID could not be read.'); setBusy(false); return }
+      if (imageFile) {
+        if (editingId) await supabase.from('product_images').delete().eq('product_id', productId)
+        const extension = imageFile.name.split('.').pop()?.toLowerCase() || 'jpg'
+        const path = `${productId}/${crypto.randomUUID()}.${extension}`
+        const { error: uploadError } = await supabase.storage.from('product-images').upload(path, imageFile, { upsert: false, contentType: imageFile.type })
+        if (uploadError) { setMessage(`Product saved, but image upload failed: ${uploadError.message}`); setBusy(false); return }
+        const { data: publicUrl } = supabase.storage.from('product-images').getPublicUrl(path)
+        const { error: imageError } = await supabase.from('product_images').insert({ product_id: productId, storage_path: path, image_url: publicUrl.publicUrl, alt_text: form.name.trim(), display_order: 0 })
+        if (imageError) { setMessage(`Product saved, but image record failed: ${imageError.message}`); setBusy(false); return }
+      }
+      if (editingId) await supabase.from('product_colors').delete().eq('product_id', productId)
+      const validColors = colors.filter((color) => color.name.trim() && /^#[0-9A-Fa-f]{6}$/.test(color.hex_code))
+      if (validColors.length) {
+        const { error: colorsError } = await supabase.from('product_colors').insert(validColors.map((color) => ({ product_id: productId, name: color.name.trim(), hex_code: color.hex_code, stock_quantity: Math.max(0, Number(color.stock_quantity) || 0), is_active: true })))
+        if (colorsError) { setMessage(`Product saved, but colors could not be saved: ${colorsError.message}`); setBusy(false); return }
+      }
+      setMessage(editingId ? 'Product updated with image and available colors.' : 'Product created with image and available colors.')
+      resetForm(); await loadData()
+    }
     setBusy(false)
   }
   const deleteProduct = async (product) => {
@@ -177,6 +220,8 @@ export default function AdminDashboard({ session, onSignIn, onBack, onSignOut })
         <div className="admin-card-heading"><div><p className="eyebrow">{editingId ? 'Edit listing' : 'New listing'}</p><h2>{editingId ? 'Update product' : 'Add a product'}</h2></div>{editingId && <button type="button" className="admin-text-button" onClick={resetForm}>Cancel edit</button>}</div>
         <div className="admin-form-grid"><label>NAME<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>SLUG<input required value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} placeholder="auto-generated if blank" /></label><label>SKU<input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} /></label><label>CATEGORY<select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}><option value="">Uncategorised</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label><label>TYPE<input value={form.product_type} onChange={(e) => setForm({ ...form, product_type: e.target.value })} /></label><label>REGULAR PRICE (DT)<input required type="number" min="0" step="0.01" value={form.regular_price} onChange={(e) => setForm({ ...form, regular_price: e.target.value })} /></label><label>DISCOUNT PRICE (DT)<input type="number" min="0" step="0.01" value={form.discount_price} onChange={(e) => setForm({ ...form, discount_price: e.target.value })} /></label><label>STOCK<input required type="number" min="0" value={form.stock_quantity} onChange={(e) => setForm({ ...form, stock_quantity: e.target.value })} /></label></div>
         <label>SHORT DESCRIPTION<input value={form.short_description || ''} onChange={(e) => setForm({ ...form, short_description: e.target.value })} /></label><label>DESCRIPTION<textarea rows="3" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+        <div className="admin-media-field"><label>PRODUCT IMAGE<input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleImageChange} /></label>{imagePreview && <div className="admin-image-preview"><img src={imagePreview} alt="Product preview" /><button type="button" onClick={() => { setImageFile(null); setImagePreview('') }} aria-label="Remove product image"><X size={15} /></button></div>}<small>PNG, JPG or WebP · maximum 5 MB</small></div>
+        <div className="admin-colors-field"><div className="admin-inline-heading"><div><p className="eyebrow">Available options</p><h3>Product colors</h3></div><button type="button" className="admin-add-option" onClick={addColor}><Plus size={14} /> ADD COLOR</button></div>{colors.length === 0 && <p className="admin-field-help">Add the colors customers can choose from, with stock for each option.</p>}{colors.map((color, index) => <div className="admin-color-row" key={`${color.id || 'new'}-${index}`}><input value={color.name} onChange={(e) => updateColor(index, 'name', e.target.value)} placeholder="Color name · Gold" aria-label="Color name" /><input type="color" value={color.hex_code} onChange={(e) => updateColor(index, 'hex_code', e.target.value)} aria-label="Color swatch" /><input type="number" min="0" value={color.stock_quantity} onChange={(e) => updateColor(index, 'stock_quantity', e.target.value)} placeholder="Stock" aria-label="Color stock" /><button type="button" onClick={() => removeColor(index)} aria-label="Remove color"><X size={15} /></button></div>)}</div>
         <div className="admin-checks">{[['is_active', 'Published'], ['is_featured', 'Featured'], ['is_best_seller', 'Bestseller'], ['is_new_arrival', 'New arrival']].map(([key, label]) => <label key={key}><input type="checkbox" checked={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.checked })} />{label}</label>)}</div>
         <button className="button button-dark" disabled={busy}>{editingId ? <Save size={15} /> : <Plus size={15} />}{editingId ? 'SAVE CHANGES' : 'CREATE PRODUCT'}</button>
       </form>
