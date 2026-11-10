@@ -6,7 +6,7 @@
 .admin-topbar h1{font-size:clamp(35px,4vw,58px)}
 .admin-top-actions{display:flex;align-items:center;gap:10px}
 .admin-icon-button{width:42px;height:42px;display:grid;place-items:center;border:1px solid var(--line);background:#fff}
-.admin-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin:46px 0 34px;background:var(--line);border:1px solid var(--line)}
+.admin-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin:46px 0 34px;background:var(--line);border:1px solid var(--line)}
 .admin-stats>div{background:#fff;padding:22px 24px;display:grid;gap:7px}
 .admin-stats span,.admin-stats small{color:#817d75;font-size:10px;letter-spacing:.12em;text-transform:uppercase}
 .admin-stats strong{font-family:'Playfair Display',serif;font-size:28px;font-weight:400;overflow-wrap:anywhere}
@@ -32,6 +32,8 @@
 .stock-input{width:72px;padding:7px 8px;border:1px solid var(--line);background:#fff;color:var(--ink)}
 .stock-input:focus{border-color:var(--gold);outline:none}
 .admin-table td:first-child{min-width:150px}.admin-table strong,.admin-table small{display:block}.admin-table small{color:#8e8a82;font-size:10px;margin-top:5px}
+.admin-table strong svg{display:inline;vertical-align:-2px;color:var(--gold)}
+.admin-toolbar{display:flex;gap:12px;align-items:center;margin-bottom:22px}.admin-search,.admin-filter{display:flex;align-items:center;gap:8px;border:1px solid var(--line);padding:0 12px;color:#817d75}.admin-search{flex:1}.admin-search input,.admin-filter select{border:0;background:#fff;outline:0;padding:11px 0;font-size:12px}.admin-filter select{color:var(--ink)}.admin-link-button{color:var(--ink);text-align:left;padding:0}.admin-link-button:hover{color:var(--gold-deep)}.admin-phone-link{display:inline-flex;align-items:center;gap:5px;color:var(--gold-deep);text-decoration:none}.admin-phone-link:hover{text-decoration:underline}
 .admin-row-actions{display:flex;gap:5px}.admin-row-actions button{padding:7px;color:#817d75}.admin-row-actions button:hover{color:var(--gold-deep)}
 .status-pill{display:inline-block;padding:5px 8px;font-size:9px;letter-spacing:.08em;text-transform:uppercase}.status-active{color:#426d4b;background:#edf5ed}.status-muted{color:#817d75;background:#f2f0ec}.status-select{border:1px solid var(--line);background:#fff;padding:7px;text-transform:capitalize}.status-select.status-delivered{color:#426d4b;border-color:#b9d5bd}.status-select.status-cancelled{color:#9b4a43;border-color:#e4c4bf}.status-select.status-confirmed,.status-select.status-preparing,.status-select.status-shipped{color:var(--gold-deep);border-color:#ead8b8}.order-status-help{display:block;color:#817d75;font-size:9px;margin-top:5px}
 .admin-message{margin-bottom:20px;padding:12px 15px;border-left:2px solid var(--gold);background:#fff}.admin-empty{padding:25px 12px;color:#817d75}
@@ -41,7 +43,7 @@
 .admin-gate p:not(.eyebrow){color:#77736b;max-width:380px;line-height:1.7;margin:0}.admin-gate svg{color:var(--gold)}
 .admin-setup-note{display:flex;flex-direction:column;gap:8px;max-width:520px;padding:16px 18px;background:#f8f2e7;border:1px solid #ead8b8;color:#856b3c;font-size:12px;line-height:1.6}.admin-setup-note code{font-family:monospace;font-size:11px}
 .admin-text-button{color:var(--gold-deep);font-size:11px;letter-spacing:.08em}.spin{animation:admin-spin 1s linear infinite}@keyframes admin-spin{to{transform:rotate(360deg)}}
-@media(max-width:1000px){.admin-content,.finance-grid{grid-template-columns:1fr}.finance-breakdown{grid-column:auto}}@media(max-width:650px){.admin-page{padding:45px 5% 80px}.admin-topbar{align-items:flex-start;flex-direction:column}.admin-stats{grid-template-columns:1fr}.admin-form-grid{grid-template-columns:1fr;gap:0}.admin-card{padding:20px 15px}.admin-top-actions .button{padding:11px 12px}.admin-tabs{gap:16px;overflow-x:auto}.finance-metrics{grid-template-columns:1fr}}
+@media(max-width:1000px){.admin-content,.finance-grid{grid-template-columns:1fr}.admin-stats{grid-template-columns:repeat(2,1fr)}.finance-breakdown{grid-column:auto}}@media(max-width:650px){.admin-page{padding:45px 5% 80px}.admin-topbar{align-items:flex-start;flex-direction:column}.admin-stats{grid-template-columns:1fr}.admin-form-grid{grid-template-columns:1fr;gap:0}.admin-card{padding:20px 15px}.admin-top-actions .button{padding:11px 12px}.admin-tabs{gap:16px;overflow-x:auto}.finance-metrics{grid-template-columns:1fr}.admin-toolbar{align-items:stretch;flex-direction:column}}
 .admin-order-detail { margin-bottom: 24px; }
 .admin-media-field,.admin-colors-field{margin-top:22px;padding-top:20px;border-top:1px solid var(--line)}
 .admin-media-field>label{display:block}
