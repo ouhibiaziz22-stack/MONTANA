@@ -360,6 +360,8 @@ function AuthModal({ close, mode: initialMode, onSuccess }) {
     if (result.error) {
       setMessage(mode === 'login' && result.error.message === 'Invalid login credentials'
         ? 'The email or password is incorrect. Check the Supabase user account or reset its password.'
+        : result.error.message === 'Email signups are disabled'
+          ? 'Email signups are disabled in Supabase. Enable the Email provider in Authentication settings.'
         : result.error.message === 'Email not confirmed'
           ? 'Email confirmation is enabled in Supabase. Disable Confirm email in Authentication settings, then create the account again.'
         : result.error.message)
