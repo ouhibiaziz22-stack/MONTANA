@@ -160,7 +160,13 @@ function App() {
       p_city: form.city.trim(), p_delivery_address: form.address.trim(),
       p_notes: form.notes.trim(), p_items: cart.map((item) => ({ product_id: item.id, quantity: item.quantity, product_image: item.image })),
     })
-    if (orderError) { setToast(orderError.message.includes('INSUFFICIENT_STOCK') ? 'Some items are no longer available in that quantity.' : `Order could not be saved: ${orderError.message}`); return false }
+    if (orderError) {
+      const missingCheckoutRpc = orderError.code === 'PGRST202' || orderError.message.includes('Could not find the function public.place_order')
+      setToast(missingCheckoutRpc
+        ? 'Checkout is not enabled yet. Apply the latest Supabase migration, then try again.'
+        : orderError.message.includes('INSUFFICIENT_STOCK') ? 'Some items are no longer available in that quantity.' : `Order could not be saved: ${orderError.message}`)
+      return false
+    }
     const { error: notificationError } = await supabase.functions.invoke('send-order-notification', {
       body: { order_id: order.id, notification_token: order.email_notification_token },
     })

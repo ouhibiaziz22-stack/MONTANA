@@ -110,3 +110,5 @@ begin
   alter publication supabase_realtime add table public.product_colors;
 exception when duplicate_object then null;
 end $$;
+
+notify pgrst, 'reload schema';
