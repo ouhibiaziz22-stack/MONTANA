@@ -120,6 +120,25 @@ function App() {
     window.history.pushState({}, '', view === 'admin' ? '/admin' : '/')
   }
 
+  const handleSearchChange = (value) => {
+    setSearch(value)
+    if (value.trim() && activeView !== 'collection') {
+      setActiveView('collection')
+      setActiveCategory('All')
+      window.history.pushState({}, '', '/')
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }
+
+  const clearSearch = () => {
+    setSearch('')
+    setSearchOpen(false)
+    setActiveView('home')
+    setActiveCategory('All')
+    window.history.pushState({}, '', '/')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   const addToCart = (product) => {
     setCart((current) => {
       const found = current.find((item) => item.id === product.id)
@@ -144,7 +163,8 @@ function App() {
   const filteredProducts = useMemo(() => products.filter((product) => {
     const matchesCategory = activeCategory === 'All' || product.category === activeCategory
     const query = search.trim().toLowerCase()
-    return matchesCategory && (!query || `${product.name} ${product.type} ${product.category}`.toLowerCase().includes(query))
+    const searchableText = `${product.name} ${product.type} ${product.category} ${product.description} ${product.sku || ''} ${(product.colors || []).join(' ')}`.toLowerCase()
+    return matchesCategory && (!query || searchableText.includes(query))
   }), [activeCategory, products, search])
 
   const submitNewsletter = (event) => {
@@ -200,7 +220,7 @@ function App() {
           <button className="bag-button icon-button" onClick={() => setCartOpen(true)} aria-label="Shopping bag"><ShoppingBag size={19} />{cartCount > 0 && <span>{cartCount}</span>}</button>
         </div>
       </header>
-      <AnimatePresence>{searchOpen && <Motion.div className="search-bar" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}><Search size={18} /><input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search pieces, collections..." /><button onClick={() => { setSearch(''); setSearchOpen(false) }}><X size={18} /></button></Motion.div>}</AnimatePresence>
+      <AnimatePresence>{searchOpen && <Motion.div className="search-bar" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}><Search size={18} /><input autoFocus value={search} onChange={(event) => handleSearchChange(event.target.value)} placeholder="Search pieces, collections..." aria-label="Search products" /><button onClick={clearSearch} aria-label="Clear search"><X size={18} /></button></Motion.div>}</AnimatePresence>
 
       {activeView === 'admin' ? <AdminDashboard session={session} onSignIn={() => setAuthOpen(true)} onBack={() => navigate('home')} onSignOut={() => supabase.auth.signOut()} /> : <><main>
         {activeView === 'home' ? <Home products={products} navigate={navigate} addToCart={addToCart} setSelectedProduct={setSelectedProduct} setActiveCategory={setActiveCategory} submitNewsletter={submitNewsletter} email={email} setEmail={setEmail} /> : <CollectionView category={activeCategory} products={filteredProducts} navigate={navigate} addToCart={addToCart} setSelectedProduct={setSelectedProduct} />}
