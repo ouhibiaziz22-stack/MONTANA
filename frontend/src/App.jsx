@@ -184,6 +184,7 @@ function App() {
       const missingCheckoutRpc = orderError.code === 'PGRST202' || orderError.message.includes('Could not find the function public.place_order')
       setToast(missingCheckoutRpc
         ? 'Checkout is not enabled yet. Apply the latest Supabase migration, then try again.'
+        : orderError.message.includes('email_notification_token') ? 'Checkout database is outdated. Apply migration 20261110060000_checkout_without_email_token.sql in Supabase, then try again.'
         : orderError.message.includes('INVALID_DELIVERY_DETAILS') ? 'Please enter a valid name, phone number, city, and complete delivery address.'
         : orderError.message.includes('INSUFFICIENT_STOCK') ? 'Some items are no longer available in that quantity.' : `Order could not be saved: ${orderError.message}`)
       return false
