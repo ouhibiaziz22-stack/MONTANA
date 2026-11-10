@@ -122,23 +122,38 @@ export default function AdminDashboard({ session, onSignIn, onBack, onSignOut })
   const saveProduct = async (event) => {
     event.preventDefault()
     setBusy(true); setMessage('')
+    const regularPrice = Number(form.regular_price)
+    const discountPrice = form.discount_price === '' ? null : Number(form.discount_price)
+    const stockQuantity = Number(form.stock_quantity)
+    if (!form.name.trim() || !Number.isFinite(regularPrice) || regularPrice < 0 || (discountPrice !== null && (!Number.isFinite(discountPrice) || discountPrice < 0 || discountPrice > regularPrice)) || !Number.isInteger(stockQuantity) || stockQuantity < 0) {
+      setMessage('Please enter a valid product name, price, discount, and whole-number stock quantity.')
+      setBusy(false)
+      return
+    }
     const payload = {
       name: form.name.trim(), slug: form.slug.trim() || form.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
       sku: form.sku.trim() || null, category_id: form.category_id || null, product_type: form.product_type.trim() || null,
       short_description: form.short_description.trim() || null, description: form.description.trim(),
-      regular_price: Number(form.regular_price), discount_price: form.discount_price === '' ? null : Number(form.discount_price),
-      stock_quantity: Number(form.stock_quantity), is_featured: form.is_featured, is_best_seller: form.is_best_seller,
+      regular_price: regularPrice, discount_price: discountPrice,
+      stock_quantity: stockQuantity, is_featured: form.is_featured, is_best_seller: form.is_best_seller,
       is_new_arrival: form.is_new_arrival, is_active: form.is_active,
     }
     const result = editingId
-      ? await supabase.from('products').update(payload).eq('id', editingId)
+      ? await supabase.from('products').update(payload).eq('id', editingId).select('id').single()
       : await supabase.from('products').insert(payload).select('id').single()
     if (result.error) setMessage(result.error.message)
     else {
       const productId = editingId || result.data?.id
       if (!productId) { setMessage('Product saved, but its ID could not be read.'); setBusy(false); return }
       if (imageFile) {
-        if (editingId) await supabase.from('product_images').delete().eq('product_id', productId)
+        if (editingId) {
+          const { error: deleteImageError } = await supabase.from('product_images').delete().eq('product_id', productId)
+          if (deleteImageError) {
+            setMessage(`Product saved, but the previous image could not be replaced: ${deleteImageError.message}`)
+            setBusy(false)
+            return
+          }
+        }
         const extension = imageFile.name.split('.').pop()?.toLowerCase() || 'jpg'
         const path = `${productId}/${crypto.randomUUID()}.${extension}`
         const { error: uploadError } = await supabase.storage.from('product-images').upload(path, imageFile, { upsert: false, contentType: imageFile.type })
@@ -147,7 +162,14 @@ export default function AdminDashboard({ session, onSignIn, onBack, onSignOut })
         const { error: imageError } = await supabase.from('product_images').insert({ product_id: productId, storage_path: path, image_url: publicUrl.publicUrl, alt_text: form.name.trim(), display_order: 0 })
         if (imageError) { setMessage(`Product saved, but image record failed: ${imageError.message}`); setBusy(false); return }
       }
-      if (editingId) await supabase.from('product_colors').delete().eq('product_id', productId)
+      if (editingId) {
+        const { error: deleteColorsError } = await supabase.from('product_colors').delete().eq('product_id', productId)
+        if (deleteColorsError) {
+          setMessage(`Product saved, but existing colors could not be replaced: ${deleteColorsError.message}`)
+          setBusy(false)
+          return
+        }
+      }
       const validColors = colors.filter((color) => color.name.trim() && /^#[0-9A-Fa-f]{6}$/.test(color.hex_code))
       if (validColors.length) {
         const { error: colorsError } = await supabase.from('product_colors').insert(validColors.map((color) => ({ product_id: productId, name: color.name.trim(), hex_code: color.hex_code, stock_quantity: Math.max(0, Number(color.stock_quantity) || 0), is_active: true })))
