@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, CheckCircle2, Clock3, DollarSign, Edit3, ImagePlus, Package, Plus, RefreshCw, Save, ShieldAlert, Trash2, TrendingUp, X } from 'lucide-react'
 import { supabase } from './lib/supabase'
 import { formatPrice } from './lib/currency'
-import { defaultProducts } from './lib/catalog'
 import './Admin.css'
 
 const emptyProduct = {
@@ -61,37 +60,6 @@ export default function AdminDashboard({ session, onSignIn, onBack, onSignOut })
     if (productError || orderError) setMessage('Could not load commerce data. Please try again.')
     let loadedProducts = productRows || []
     let loadedCategories = categoryRows || []
-    if (!productError && loadedProducts.length === 0) {
-      const categoryNames = [...new Set(defaultProducts.map((product) => product.category))]
-      const { error: categoryInsertError } = await supabase.from('categories').upsert(
-        categoryNames.map((name, index) => ({ name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), display_order: index, is_active: true })),
-        { onConflict: 'slug' },
-      )
-      if (!categoryInsertError) {
-        const { data: seededCategories } = await supabase.from('categories').select('id, name, slug').in('slug', categoryNames.map((name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-')))
-        loadedCategories = seededCategories || []
-        const categoryByName = Object.fromEntries(loadedCategories.map((category) => [category.name, category.id]))
-        const { error: seedError } = await supabase.from('products').insert(defaultProducts.map((product) => ({
-          name: product.name,
-          slug: product.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-          product_type: product.type,
-          short_description: product.description,
-          description: product.description,
-          regular_price: product.price,
-          stock_quantity: 10,
-          category_id: categoryByName[product.category] || null,
-          is_active: true,
-          is_best_seller: product.tag === 'Bestseller',
-          is_new_arrival: product.tag === 'New',
-          is_featured: product.tag === 'Signature',
-        })))
-        if (!seedError) {
-          const { data: refreshedProducts } = await supabase.from('products').select('*, categories(id, name)').order('created_at', { ascending: false })
-          loadedProducts = refreshedProducts || []
-          setMessage('Default catalog loaded. You can now edit stock, prices, and products.')
-        } else setMessage(seedError.message)
-      } else setMessage(categoryInsertError.message)
-    }
     setProducts(loadedProducts)
     setCategories(loadedCategories)
     setOrders(orderRows || [])
@@ -115,9 +83,17 @@ export default function AdminDashboard({ session, onSignIn, onBack, onSignOut })
     else setProducts((current) => current.map((item) => item.id === product.id ? { ...item, stock_quantity: nextStock } : item))
   }
 
-  // Loading protected data is intentionally triggered when the verified session changes.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { loadData() }, [loadData])
+  useEffect(() => {
+    // Loading protected data is intentionally triggered when the verified session changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadData()
+    const channel = supabase.channel('admin-commerce-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_images' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, loadData)
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [loadData])
 
   const resetForm = () => { setForm(emptyProduct); setEditingId(null); setImageFile(null); setImagePreview(''); setColors([]) }
   const editProduct = async (product) => {
@@ -159,7 +135,7 @@ export default function AdminDashboard({ session, onSignIn, onBack, onSignOut })
       : await supabase.from('products').insert(payload).select('id').single()
     if (result.error) setMessage(result.error.message)
     else {
-      const productId = editingId || result.data?.[0]?.id
+      const productId = editingId || result.data?.id
       if (!productId) { setMessage('Product saved, but its ID could not be read.'); setBusy(false); return }
       if (imageFile) {
         if (editingId) await supabase.from('product_images').delete().eq('product_id', productId)
