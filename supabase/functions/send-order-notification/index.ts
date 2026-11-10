@@ -42,12 +42,21 @@ Deno.serve(async (request) => {
     if (notificationError?.code === '23505') return new Response(JSON.stringify({ ok: true, duplicate: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     if (notificationError || !notification) throw notificationError || new Error('Could not create notification record.')
     const recipients: { to: string; kind: 'admin' | 'customer'; subject: string }[] = [{ to: adminEmail, kind: 'admin', subject: `NEW ORDER — #${order.order_number}` }]
-    if (order.customer_email) recipients.push({ to: order.customer_email, kind: 'customer' as const, subject: `Order confirmation — #${order.order_number}` })
+    if (order.customer_email) recipients.push({ to: order.customer_email, kind: 'customer', subject: `Order confirmation — #${order.order_number}` })
     for (const recipient of recipients) {
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': `montana-order-${orderId}-${recipient.kind}` },
-        body: JSON.stringify({ from: Deno.env.get('RESEND_FROM_EMAIL') || 'Montana Cadeaux <onboarding@resend.dev>', to: [recipient.to], subject: recipient.subject, html: renderEmail(order, items || [], recipient.kind) }),
+        headers: {
+          Authorization: `Bearer ${resendKey}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `montana-order-${orderId}-${recipient.kind}`,
+        },
+        body: JSON.stringify({
+          from: Deno.env.get('RESEND_FROM_EMAIL') || 'Montana Cadeaux <onboarding@resend.dev>',
+          to: [recipient.to],
+          subject: recipient.subject,
+          html: renderEmail(order, items || [], recipient.kind),
+        }),
       })
       if (!response.ok) throw new Error((await response.json()).message || 'Email provider rejected the message.')
     }
