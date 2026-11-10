@@ -187,13 +187,6 @@ function App() {
         : orderError.message.includes('INSUFFICIENT_STOCK') ? 'Some items are no longer available in that quantity.' : `Order could not be saved: ${orderError.message}`)
       return false
     }
-    const { error: notificationError } = await supabase.functions.invoke('send-order-notification', {
-      body: { order_id: order.id, notification_token: order.email_notification_token },
-    })
-    if (notificationError) {
-      console.error('Order notification failed', notificationError)
-      setToast('Order saved. Email notification is pending provider setup.')
-    }
     setCart([])
     setCheckout(false)
     setLastOrderNumber(order.order_number)
