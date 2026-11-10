@@ -173,9 +173,8 @@ function App() {
   }
 
   const placeOrder = async (form) => {
-    if (!session?.user?.id) { setCheckout(false); setAuthOpen(true); setToast('Please sign in before checkout.'); return false }
     const { data: order, error: orderError } = await supabase.rpc('place_order', {
-      p_customer_name: form.name.trim(), p_customer_email: session.user.email,
+      p_customer_name: form.name.trim(), p_customer_email: (form.email || session?.user?.email || '').trim(),
       p_customer_phone: form.phone.trim(), p_governorate: form.governorate.trim(),
       p_city: form.city.trim(), p_delivery_address: form.address.trim(),
       p_notes: form.notes.trim(), p_items: cart.map((item) => ({ product_id: item.id, quantity: item.quantity, product_image: item.image })),
@@ -221,7 +220,7 @@ function App() {
         {activeView === 'home' ? <Home products={products} navigate={navigate} addToCart={addToCart} setSelectedProduct={setSelectedProduct} setActiveCategory={setActiveCategory} submitNewsletter={submitNewsletter} email={email} setEmail={setEmail} /> : <CollectionView category={activeCategory} products={filteredProducts} navigate={navigate} addToCart={addToCart} setSelectedProduct={setSelectedProduct} />}
       </main><Footer navigate={navigate} openContact={() => setContactOpen(true)} /></>}
       <AnimatePresence>{selectedProduct && <ProductModal product={selectedProduct} close={() => setSelectedProduct(null)} addToCart={addToCart} />}</AnimatePresence>
-      <AnimatePresence>{cartOpen && <CartDrawer cart={cart} total={cartTotal} close={() => setCartOpen(false)} updateQuantity={updateQuantity} remove={(id) => setCart((current) => current.filter((item) => item.id !== id))} checkout={() => { setCartOpen(false); if (session) setCheckout(true); else setAuthOpen(true); window.scrollTo({ top: 0 }) }} />}</AnimatePresence>
+      <AnimatePresence>{cartOpen && <CartDrawer cart={cart} total={cartTotal} close={() => setCartOpen(false)} updateQuantity={updateQuantity} remove={(id) => setCart((current) => current.filter((item) => item.id !== id))} checkout={() => { setCartOpen(false); setCheckout(true); window.scrollTo({ top: 0 }) }} />}</AnimatePresence>
       <AnimatePresence>{checkout && <Checkout cart={cart} total={cartTotal} close={() => setCheckout(false)} complete={placeOrder} email={session?.user?.email || ''} />}</AnimatePresence>
       <AnimatePresence>{orderComplete && <OrderConfirmation orderNumber={lastOrderNumber} close={() => setOrderComplete(false)} navigate={navigate} />}</AnimatePresence>
       <AnimatePresence>{authOpen && <AuthModal close={() => setAuthOpen(false)} mode="login" onSuccess={() => setAuthOpen(false)} />}</AnimatePresence>
@@ -279,7 +278,7 @@ function ProductModal({ product, close, addToCart }) { const outOfStock = Number
 function CartDrawer({ cart, total, close, updateQuantity, remove, checkout }) { const finalTotal = calculateOrderTotal(total); return <Motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}><Motion.aside className="cart-drawer" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 28 }} onClick={(event) => event.stopPropagation()}><div className="drawer-header"><div><p className="eyebrow">Your selection</p><h2>Your bag <span>({cart.reduce((sum, item) => sum + item.quantity, 0)})</span></h2></div><button className="icon-button" onClick={close}><X size={20} /></button></div>{cart.length ? <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={item.id}><img src={item.image} alt="" /><div className="cart-item-info"><h3>{item.name}</h3><p>{formatPrice(item.price)}</p><div className="quantity"><button onClick={() => updateQuantity(item.id, -1)}><Minus size={13} /></button><span>{item.quantity}</span><button onClick={() => updateQuantity(item.id, 1)}><Plus size={13} /></button></div></div><button className="remove-item" onClick={() => remove(item.id)}>Remove</button></div>)}</div><div className="drawer-bottom"><div className="subtotal"><span>SUBTOTAL</span><strong>{formatPrice(total)}</strong></div><div className="summary-line cart-delivery"><span>DELIVERY FEE</span><strong>{formatPrice(DELIVERY_FEE)}</strong></div><div className="summary-total cart-total"><span>TOTAL</span><strong>{formatPrice(finalTotal)}</strong></div><p className="delivery-copy">One fixed delivery fee is applied once per order.</p><button className="button button-dark full-button" onClick={checkout}>PROCEED TO CHECKOUT <ArrowRight size={15} /></button></div></> : <div className="empty-cart"><ShoppingBag size={30} /><p>Your bag is waiting to be filled.</p><button className="button button-outline-dark" onClick={close}>CONTINUE SHOPPING</button></div>}</Motion.aside></Motion.div> }
 
 function Checkout({ cart, total, close, complete, email }) {
-  const [form, setForm] = useState({ name: '', phone: '', governorate: '', city: '', address: '', notes: '' })
+  const [form, setForm] = useState({ name: '', phone: '', governorate: '', city: '', address: '', notes: '', email })
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState('')
   const valid = form.name.trim().length >= 2
@@ -309,7 +308,7 @@ function Checkout({ cart, total, close, complete, email }) {
           <h1>Complete your order.</h1>
           <p className="checkout-intro">Your pieces will be carefully wrapped and delivered to your door.</p>
           <form className="checkout-form" onSubmit={submit}>
-            <label>EMAIL ADDRESS<input readOnly value={email} /></label>
+            <label>EMAIL ADDRESS<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="you@example.com (optional)" /></label>
             <label>FULL NAME<input required minLength="2" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Your full name" /></label>
             <label>PHONE NUMBER<input required minLength="6" type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+216 00 000 000" /></label>
             <label>GOVERNORATE<input required value={form.governorate} onChange={(e) => setForm({ ...form, governorate: e.target.value })} placeholder="Tunis" /></label>
