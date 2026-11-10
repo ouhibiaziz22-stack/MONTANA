@@ -159,8 +159,24 @@ export default function AdminDashboard({ session, onSignIn, onBack, onSignOut })
         const { error: uploadError } = await supabase.storage.from('product-images').upload(path, imageFile, { upsert: false, contentType: imageFile.type })
         if (uploadError) { setMessage(`Product saved, but image upload failed: ${uploadError.message}`); setBusy(false); return }
         const { data: publicUrl } = supabase.storage.from('product-images').getPublicUrl(path)
-        const { error: imageError } = await supabase.from('product_images').insert({ product_id: productId, storage_path: path, image_url: publicUrl.publicUrl, alt_text: form.name.trim(), display_order: 0 })
+        if (!publicUrl?.publicUrl) {
+          setMessage('Product saved, but the image URL could not be generated.')
+          setBusy(false)
+          return
+        }
+        const { data: imageRow, error: imageError } = await supabase.from('product_images').insert({
+          product_id: productId,
+          storage_path: path,
+          image_url: publicUrl.publicUrl,
+          alt_text: form.name.trim(),
+          display_order: 0,
+        }).select('id, image_url').single()
         if (imageError) { setMessage(`Product saved, but image record failed: ${imageError.message}`); setBusy(false); return }
+        if (!imageRow?.image_url) {
+          setMessage('Product saved, but the image record was not returned by Supabase.')
+          setBusy(false)
+          return
+        }
       }
       if (editingId) {
         const { error: deleteColorsError } = await supabase.from('product_colors').delete().eq('product_id', productId)
