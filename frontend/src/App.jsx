@@ -265,12 +265,14 @@ function AuthModal({ close, mode: initialMode, onSuccess }) {
   const [mode, setMode] = useState(initialMode)
   const [form, setForm] = useState({ name: '', phone: '', address: '', city: '', email: '', password: '' })
   const [message, setMessage] = useState('')
+  const [messageType, setMessageType] = useState('error')
   const [busy, setBusy] = useState(false)
 
   const submit = async (event) => {
     event.preventDefault()
     setBusy(true)
     setMessage('')
+    setMessageType('error')
     const email = form.email.trim().toLowerCase()
     const password = form.password
     const result = mode === 'login'
@@ -289,6 +291,7 @@ function AuthModal({ close, mode: initialMode, onSuccess }) {
     }
     if (mode === 'signup' && !result.data.session) {
       localStorage.setItem('montana-pending-profile', JSON.stringify({ ...form, userId: result.data.user?.id }))
+      setMessageType('success')
       setMessage('Check your email to confirm your account.')
       return
     }
@@ -329,10 +332,10 @@ function AuthModal({ close, mode: initialMode, onSuccess }) {
         {mode === 'signup' && <><label>FULL NAME<input required autoComplete="name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Your full name" /></label><label>PHONE NUMBER<input required type="tel" autoComplete="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="+216 00 000 000" /></label><label>CITY<input required autoComplete="address-level2" value={form.city} onChange={(event) => setForm({ ...form, city: event.target.value })} placeholder="Tunis" /></label><label>DELIVERY ADDRESS<textarea required autoComplete="street-address" value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder="Street, building, apartment..." /></label></>}
         <label>EMAIL ADDRESS<input type="email" required autoComplete="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="you@example.com" /></label>
         <label>PASSWORD<input type="password" required minLength={6} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="Enter your password" /></label>
-        {message && <p className="auth-message" role="alert">{message}</p>}
+        {message && <p className={`auth-message auth-message-${messageType}`} role={messageType === 'error' ? 'alert' : 'status'}>{message}</p>}
         <button className="button button-dark full-button" disabled={busy}>{busy ? 'SIGNING YOU IN...' : mode === 'login' ? 'SIGN IN TO YOUR ACCOUNT' : 'CREATE MY ACCOUNT'} <ArrowRight size={15} /></button>
       </form>
-      <button className="auth-switch" onClick={() => { setMessage(''); setMode(mode === 'login' ? 'signup' : 'login') }}>{mode === 'login' ? 'New to Montana? Create an account' : 'Already have an account? Sign in'}</button></div>
+      <button className="auth-switch" onClick={() => { setMessage(''); setMessageType('error'); setMode(mode === 'login' ? 'signup' : 'login') }}>{mode === 'login' ? 'New to Montana? Create an account' : 'Already have an account? Sign in'}</button></div>
     </Motion.div>
   </Motion.div>
 }
