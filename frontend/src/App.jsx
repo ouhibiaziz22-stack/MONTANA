@@ -366,7 +366,8 @@ function AuthModal({ close, mode: initialMode, onSuccess }) {
     if (mode === 'signup' && !result.data.session) {
       localStorage.setItem('montana-pending-profile', JSON.stringify({ ...form, userId: result.data.user?.id }))
       setMessageType('success')
-      setMessage('Check your email to confirm your account.')
+      setMode('login')
+      setMessage('Account created successfully. Sign in to continue.')
       return
     }
     if (mode === 'signup') {
