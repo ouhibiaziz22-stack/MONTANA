@@ -184,6 +184,7 @@ function App() {
       const missingCheckoutRpc = orderError.code === 'PGRST202' || orderError.message.includes('Could not find the function public.place_order')
       setToast(missingCheckoutRpc
         ? 'Checkout is not enabled yet. Apply the latest Supabase migration, then try again.'
+        : orderError.message.includes('INVALID_DELIVERY_DETAILS') ? 'Please enter a valid name, phone number, city, and complete delivery address.'
         : orderError.message.includes('INSUFFICIENT_STOCK') ? 'Some items are no longer available in that quantity.' : `Order could not be saved: ${orderError.message}`)
       return false
     }
@@ -276,7 +277,60 @@ function ProductModal({ product, close, addToCart }) { const outOfStock = Number
 
 function CartDrawer({ cart, total, close, updateQuantity, remove, checkout }) { const finalTotal = calculateOrderTotal(total); return <Motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}><Motion.aside className="cart-drawer" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 28 }} onClick={(event) => event.stopPropagation()}><div className="drawer-header"><div><p className="eyebrow">Your selection</p><h2>Your bag <span>({cart.reduce((sum, item) => sum + item.quantity, 0)})</span></h2></div><button className="icon-button" onClick={close}><X size={20} /></button></div>{cart.length ? <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={item.id}><img src={item.image} alt="" /><div className="cart-item-info"><h3>{item.name}</h3><p>{formatPrice(item.price)}</p><div className="quantity"><button onClick={() => updateQuantity(item.id, -1)}><Minus size={13} /></button><span>{item.quantity}</span><button onClick={() => updateQuantity(item.id, 1)}><Plus size={13} /></button></div></div><button className="remove-item" onClick={() => remove(item.id)}>Remove</button></div>)}</div><div className="drawer-bottom"><div className="subtotal"><span>SUBTOTAL</span><strong>{formatPrice(total)}</strong></div><div className="summary-line cart-delivery"><span>DELIVERY FEE</span><strong>{formatPrice(DELIVERY_FEE)}</strong></div><div className="summary-total cart-total"><span>TOTAL</span><strong>{formatPrice(finalTotal)}</strong></div><p className="delivery-copy">One fixed delivery fee is applied once per order.</p><button className="button button-dark full-button" onClick={checkout}>PROCEED TO CHECKOUT <ArrowRight size={15} /></button></div></> : <div className="empty-cart"><ShoppingBag size={30} /><p>Your bag is waiting to be filled.</p><button className="button button-outline-dark" onClick={close}>CONTINUE SHOPPING</button></div>}</Motion.aside></Motion.div> }
 
-function Checkout({ cart, total, close, complete, email }) { const [form, setForm] = useState({ name: '', phone: '', governorate: '', city: '', address: '', notes: '' }); const [busy, setBusy] = useState(false); const valid = [form.name, form.phone, form.governorate, form.city, form.address].every((value) => value.trim()); const finalTotal = calculateOrderTotal(total); const submit = async (event) => { event.preventDefault(); if (!valid || busy) return; setBusy(true); await complete(form); setBusy(false) }; return <Motion.div className="checkout-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><div className="checkout-page"><button className="checkout-back" onClick={close}><ChevronLeft size={17} /> Back to bag</button><div className="checkout-grid"><div><p className="eyebrow">Montana Cadeaux</p><h1>Complete your order.</h1><p className="checkout-intro">Your pieces will be carefully wrapped and delivered to your door.</p><form className="checkout-form" onSubmit={submit}><label>EMAIL ADDRESS<input readOnly value={email} /></label><label>FULL NAME<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Your full name" /></label><label>PHONE NUMBER<input required type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+216 00 000 000" /></label><label>GOVERNORATE<input required value={form.governorate} onChange={(e) => setForm({ ...form, governorate: e.target.value })} placeholder="Tunis" /></label><label>CITY / DELEGATION<input required value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Tunis" /></label><label>COMPLETE DELIVERY ADDRESS<textarea required value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Street, building, apartment..." /></label><label>ADDITIONAL NOTES<textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional delivery notes" /></label><div className="payment-choice"><span>PAYMENT</span><div><Check size={15} /> Cash on delivery</div></div><button className="button button-dark full-button" disabled={!valid || busy}>{busy ? 'SAVING ORDER...' : 'PLACE ORDER'} <ArrowRight size={15} /></button>{busy && <p className="checkout-processing" role="status"><span className="processing-dot" /> Please wait while we securely confirm your order.</p>}</form></div><div className="checkout-summary"><p className="eyebrow">Order summary</p>{cart.map((item) => <div className="summary-item" key={item.id}><img src={item.image} alt="" /><div><p>{item.name}</p><span>Qty {item.quantity} · {formatPrice(item.price)}</span></div><strong>{formatPrice(item.price * item.quantity)}</strong></div>)}<div className="summary-line"><span>Delivery Fee</span><strong>{formatPrice(DELIVERY_FEE)}</strong></div><div className="summary-total"><span>Total</span><strong>{formatPrice(finalTotal)}</strong></div></div></div></div></Motion.div> }
+function Checkout({ cart, total, close, complete, email }) {
+  const [form, setForm] = useState({ name: '', phone: '', governorate: '', city: '', address: '', notes: '' })
+  const [busy, setBusy] = useState(false)
+  const [formError, setFormError] = useState('')
+  const valid = form.name.trim().length >= 2
+    && form.phone.trim().length >= 6
+    && form.governorate.trim()
+    && form.city.trim().length >= 2
+    && form.address.trim().length >= 5
+  const finalTotal = calculateOrderTotal(total)
+  const submit = async (event) => {
+    event.preventDefault()
+    if (busy) return
+    if (!valid) {
+      setFormError('Please enter a complete delivery address (at least 5 characters), a valid name, phone number, and city.')
+      return
+    }
+    setFormError('')
+    setBusy(true)
+    await complete(form)
+    setBusy(false)
+  }
+  return <Motion.div className="checkout-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+    <div className="checkout-page">
+      <button className="checkout-back" onClick={close}><ChevronLeft size={17} /> Back to bag</button>
+      <div className="checkout-grid">
+        <div>
+          <p className="eyebrow">Montana Cadeaux</p>
+          <h1>Complete your order.</h1>
+          <p className="checkout-intro">Your pieces will be carefully wrapped and delivered to your door.</p>
+          <form className="checkout-form" onSubmit={submit}>
+            <label>EMAIL ADDRESS<input readOnly value={email} /></label>
+            <label>FULL NAME<input required minLength="2" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Your full name" /></label>
+            <label>PHONE NUMBER<input required minLength="6" type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+216 00 000 000" /></label>
+            <label>GOVERNORATE<input required value={form.governorate} onChange={(e) => setForm({ ...form, governorate: e.target.value })} placeholder="Tunis" /></label>
+            <label>CITY / DELEGATION<input required minLength="2" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Tunis" /></label>
+            <label>COMPLETE DELIVERY ADDRESS<textarea required minLength="5" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Street, building, apartment..." /></label>
+            <label>ADDITIONAL NOTES<textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional delivery notes" /></label>
+            {formError && <p className="checkout-form-error" role="alert">{formError}</p>}
+            <div className="payment-choice"><span>PAYMENT</span><div><Check size={15} /> Cash on delivery</div></div>
+            <button className="button button-dark full-button" disabled={busy}>{busy ? 'SAVING ORDER...' : 'PLACE ORDER'} <ArrowRight size={15} /></button>
+            {busy && <p className="checkout-processing" role="status"><span className="processing-dot" /> Please wait while we securely confirm your order.</p>}
+          </form>
+        </div>
+        <div className="checkout-summary">
+          <p className="eyebrow">Order summary</p>
+          {cart.map((item) => <div className="summary-item" key={item.id}><img src={item.image} alt="" /><div><p>{item.name}</p><span>Qty {item.quantity} · {formatPrice(item.price)}</span></div><strong>{formatPrice(item.price * item.quantity)}</strong></div>)}
+          <div className="summary-line"><span>Delivery Fee</span><strong>{formatPrice(DELIVERY_FEE)}</strong></div>
+          <div className="summary-total"><span>Total</span><strong>{formatPrice(finalTotal)}</strong></div>
+        </div>
+      </div>
+    </div>
+  </Motion.div>
+}
 
 function OrderConfirmation({ orderNumber, close, navigate }) { return <Motion.div className="modal-backdrop confirmation-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><div className="confirmation"><div className="confirmation-mark"><Check size={24} /></div><p className="eyebrow">Thank you</p><h2>Your order is on its way.</h2><p>We’ve received your order and will be in touch shortly to confirm delivery. Your gift is already being prepared with care.</p><p className="order-number">ORDER NO. {orderNumber}</p><button className="button button-dark" onClick={() => { close(); navigate('home') }}>CONTINUE EXPLORING <ArrowRight size={15} /></button></div></Motion.div> }
 
